@@ -75,7 +75,7 @@ class Fucker:
         * `cookies`: dict, optional, cookies to use for the session
         * `headers`: dict, optional, headers to use for the session
         * `proxies`: dict, optional, proxies to use for the session
-        * `limit`: int, optional, daily time limit in minutes, shared across all courses and persisted per day (default is 0, no limit)
+        * `limit`: int, optional, daily time limit per course in minutes, each course tracked independently and persisted per day (default is 0, no limit)
         * `speed`: float, optional, video playback speed
         * `end_thre`: float, optional, threshold to stop the fucker, overloaded when there are questions left unanswered
         * `tree_view` :bool, optional, print the tree progress view of the course
@@ -105,9 +105,11 @@ class Fucker:
         logger.debug(f'proxies: {self.proxies}')
         logger.debug(f'headers: {self.headers}')
 
-        self.limit = abs(limit)                    # daily time limit for fucking, in minutes, shared across courses
+        self.limit = abs(limit)                    # daily time limit per course, in minutes
         self._daily_file = getRealPath("./daily_limit.json")
-        self._daily_time = self._loadDailyTime()   # seconds already fucked today, persisted across runs
+        self._daily = self._loadDailyTime()        # per-course seconds fucked today: {cid: {"name", "seconds"}}
+        self._flushed = {}                         # per-course seconds already persisted this run
+        self._last_flush = time.time()
         atexit.register(self._saveDailyTime)
         self.speed = speed and max(speed, 0.1)     # video play speed, Falsy values for default
         self.end_thre = max(end_thre or 0, 0.0) or 0.91 # video play end threshold, above this will be considered as finished
@@ -555,6 +557,7 @@ class Fucker:
         while played_time < end_time:
             time.sleep(1)
             ctx.fucked_time += 1 # for time limit check
+            self._maybeFlushDaily()
             elapsed_time += 1
             played_time = min(played_time+speed, end_time) # update video time and make sure not exceeding end_time
             pause = pause or int(random() < 0.0025)*60 # randomly pause a minute, may avoid detection
@@ -915,6 +918,12 @@ class Fucker:
         try:
             for chapter in root:
                 self._traverse(course_id, chapter)
+        except TimeLimitExceeded as e:
+            logger.info(f"Fucking time limit exceeded: {e}")
+            self._pushplus("fuckZHS","刷课已完成")
+            self._bark("fuckZHS","刷课已完成")
+            tprint(prefix)
+            tprint(f"{prefix}##Fucking time limit exceeded: {e}\n")
         except KeyboardInterrupt:
             logger.info("user interrupted")
         logger.info(f"Fucked course {course_id}, cost {time.time()-begin_time}s")
@@ -946,6 +955,7 @@ class Fucker:
         while played_time <= end_time:
             time.sleep(1)
             ctx.fucked_time += 1
+            self._maybeFlushDaily()
             played_time = min(played_time+speed, end_time)
             # enter branch when video is finished or interval is reached
             if played_time >= end_time or \
@@ -995,9 +1005,9 @@ class Fucker:
                         tprint(f"{prefix}##Unsupported file type, may be a quiz"[:w_lim])
                     case _:
                         self.fuckFile(course_id, file.id)
-            except TimeLimitExceeded as e:
-                logger.info(f"Time limit exceeded, video {file.id} skipped")
-                tprint(f"{prefix}##Time limit exceeded: {e}")
+            except TimeLimitExceeded:
+                logger.info(f"Time limit exceeded, aborting course {course_id}")
+                raise
             except Exception as e:
                 logger.error(f"Failed to fuck file {file.id} of course {course_id}")
                 logger.exception(e)
@@ -1310,6 +1320,7 @@ class Fucker:
         while played_time < watch_to:
             time.sleep(1)
             ctx.fucked_time += 1
+            self._maybeFlushDaily()
             elapsed += 1
             played_time = min(played_time+speed, watch_to)
             if (elapsed % interval == 0 or played_time >= watch_to) \
@@ -1390,34 +1401,102 @@ class Fucker:
             raise e
 
     def _checkTimeLimit(self, cid):
-        if self.limit and self._daily_time + self._runTime() >= self.limit*60:
-            raise TimeLimitExceeded(f"daily limit: {self.limit} minutes")
+        """per-course daily time limit: each course gets its own budget of `limit` minutes per day"""
+        if not self.limit:
+            return
+        ctx = self.context[cid] or ObjDict(default=None)
+        unflushed = (ctx.fucked_time or 0) - self._flushed.get(cid, 0)
+        spent = self._daily.get(cid, {}).get("seconds", 0) + unflushed
+        if spent >= self.limit*60:
+            raise TimeLimitExceeded(
+                f"daily limit: {self.limit} minutes for {self._courseName(cid)}")
 
-    def _runTime(self):
-        """total seconds fucked in this run, across all courses"""
-        return sum((c.fucked_time or 0) for c in self.context.values())
+    def _courseName(self, cid):
+        """best-effort course name for display and daily_limit.json"""
+        try:
+            ctx = self.context[cid]
+            name = None
+            if ctx:
+                if cid.startswith("polymas:"):
+                    name = ctx.course and ctx.course.courseName
+                elif ctx.course and ctx.course.courseInfo:  # zhidao context
+                    name = ctx.course.courseInfo.name or ctx.course.courseInfo.enName
+                else:  # hike context carries no course info, look up the course list
+                    for c in self.courses.hike or []:
+                        if str(c.courseId) == str(cid):
+                            name = c.courseName
+                            break
+            if name:
+                return name
+        except Exception:
+            pass
+        return str(cid)
 
     def _loadDailyTime(self):
-        """load seconds already fucked today, so re-runs share the same daily budget"""
+        """load today's per-course record, so re-runs resume each course's remaining budget"""
         try:
             with open(self._daily_file, "r") as f:
                 d = json.load(f)
-            if d.get("date") == datetime.now().strftime("%Y-%m-%d"):
-                return int(d.get("seconds", 0))
+            if d.get("date") != datetime.now().strftime("%Y-%m-%d"):
+                return {}
+            courses = d.get("courses")
+            if not isinstance(courses, dict):
+                return {}  # legacy {"seconds": ...} format can't be attributed to courses
+            return {str(k): {"name": str(v.get("name") or k),
+                             "seconds": int(v.get("seconds", 0))}
+                    for k, v in courses.items() if isinstance(v, dict)}
         except Exception:
             pass
-        return 0
+        return {}
 
-    def _saveDailyTime(self):
-        """persist today's fucked seconds"""
+    def _maybeFlushDaily(self):
+        """rate-limited flush so a killed process loses at most ~30s of progress"""
         if not self.limit:
             return
+        now = time.time()
+        if now - self._last_flush >= 30:
+            self._last_flush = now
+            self._flushDailyTime()
+
+    def _flushDailyTime(self):
+        """merge this run's per-course fucked time into today's record and persist"""
+        if not self.limit:
+            return
+        dirty = False
+        for cid, ctx in self.context.items():
+            ft = getattr(ctx, "fucked_time", 0)
+            if not isinstance(ft, (int, float)):
+                continue
+            delta = ft - self._flushed.get(cid, 0)
+            if delta <= 0:
+                continue
+            entry = self._daily.setdefault(cid, {"name": None, "seconds": 0})
+            entry["seconds"] += delta
+            entry["name"] = self._courseName(cid)
+            self._flushed[cid] = ft
+            dirty = True
+        if not dirty:
+            return
+        today = datetime.now().strftime("%Y-%m-%d")
+        try:  # keep records of courses untouched by this run
+            with open(self._daily_file, "r") as f:
+                disk = json.load(f)
+            courses = disk.get("courses") if disk.get("date") == today else None
+        except Exception:
+            courses = None
+        merged = {k: v for k, v in (courses or {}).items()
+                  if k not in self._daily and isinstance(v, dict)}
+        merged.update(self._daily)
         try:
             with open(self._daily_file, "w") as f:
-                json.dump({"date": datetime.now().strftime("%Y-%m-%d"),
-                           "seconds": self._daily_time + self._runTime()}, f)
+                json.dump({"date": today, "courses": merged}, f,
+                          ensure_ascii=False, indent=4)
         except Exception as e:
             logger.warning(f"failed to save daily time: {e}")
+
+    def _saveDailyTime(self):
+        """persist today's per-course fucked seconds (atexit)"""
+        self._flushDailyTime()
 
     def _sessionReady(self, ctx:dict=None):
         ctx = ObjDict(ctx or {}, recursive=False, default=False)
