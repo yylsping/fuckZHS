@@ -307,28 +307,32 @@ if not course and os.path.isfile(exec_list):
             print(f"*Failed to load course list from file: {e}")
             exit(1)
 
-# still not found?
-if not course:
-    fucker.fuckWhatever()
-    exit(0)
+try:
+    # still not found?
+    if not course:
+        fucker.fuckWhatever()
+        exit(0)
 
-# auto detect mode
-for c in course.copy():
-    if args.videos:
-        for v in args.videos:
+    # auto detect mode
+    for c in course.copy():
+        if args.videos:
+            for v in args.videos:
+                try:
+                    fucker.fuckVideo(course_id=c, video_id=v)
+                    print(f"fucked {v}")
+                    args.videos.remove(v)
+                except Exception:
+                    pass
+        else:
             try:
-                fucker.fuckVideo(course_id=c, video_id=v)
-                print(f"fucked {v}")
-                args.videos.remove(v)
-            except Exception:
-                pass
-    else:
-        try:
-            fucker.fuckCourse(course_id=c)
-            course.remove(c)
-        except Exception as e:
-            logger.exception(e)
-            print(f"Error when fucking course {c}:\n{e}")
+                fucker.fuckCourse(course_id=c)
+                course.remove(c)
+            except Exception as e:
+                logger.exception(e)
+                print(f"Error when fucking course {c}:\n{e}")
+except KeyboardInterrupt:
+    # Ctrl+C now exits the whole script; atexit flushes the daily time record
+    print("\n*User interrupted, exiting...")
 if args.videos:
     print(f"*the following videos are not fucked: {args.videos}")
 

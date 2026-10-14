@@ -498,6 +498,7 @@ class Fucker:
                             tprint(f"{prefix*3}##Failed: {e}"[:w_lim])
         except KeyboardInterrupt:
             logger.info("User interrupted")
+            raise
         wipeLine()
         tprint(prefix)
         tprint(f"\r{prefix}__Fucked course {course.courseInfo.name}, cost {time.time()-begin_time:.2f}s\n")
@@ -926,6 +927,7 @@ class Fucker:
             tprint(f"{prefix}##Fucking time limit exceeded: {e}\n")
         except KeyboardInterrupt:
             logger.info("user interrupted")
+            raise
         logger.info(f"Fucked course {course_id}, cost {time.time()-begin_time}s")
         wipeLine()
         tprint(prefix)
@@ -1281,6 +1283,7 @@ class Fucker:
                     tprint(f"{prefix*2}##Failed: {e}"[:w_lim])
         except KeyboardInterrupt:
             logger.info("User interrupted")
+            raise
         wipeLine()
         tprint(prefix)
         tprint(f"\r{prefix}__Fucked course {name}, cost {time.time()-begin_time:.2f}s\n")
