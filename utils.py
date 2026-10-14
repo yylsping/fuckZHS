@@ -86,6 +86,15 @@ def versionCmp(v1:str, v2:str) -> int:
             return dt
     return len(v1) - len(v2)
 
+def beep(times: int = 3, frequency: int = 2500, duration: int = 300):
+    """audible alert: winsound on Windows, terminal bell elsewhere"""
+    try:
+        import winsound
+        for _ in range(times):
+            winsound.Beep(frequency, duration)
+    except Exception:
+        print("\a" * times, end="", flush=True)
+
 def wipeLine():
     try:
         width = os.get_terminal_size().columns

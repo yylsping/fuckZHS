@@ -1,5 +1,5 @@
 from zd_utils import Cipher, getEv, WatchPoint, HOME_KEY, VIDEO_KEY, QA_KEY, AI_KEY, EXAM_KEY
-from utils import progressBar, HMS, wipeLine, list_to_cookie_jar, getRealPath
+from utils import progressBar, HMS, wipeLine, list_to_cookie_jar, getRealPath, beep
 from urllib.parse import unquote_plus as unquote
 from requests.adapters import HTTPAdapter, Retry
 from requests.cookies import RequestsCookieJar
@@ -648,6 +648,7 @@ class Fucker:
             match ret.code:
                 case -12:
                     e = CaptchaException("captcha required")
+                    beep() # audible alert: captcha needs manual intervention
                 case _:
                     e = Exception(f"code: {ret.code} " +
                                   f"msg: {ret.message or json.dumps(ret,indent=4,ensure_ascii=False)}")
